@@ -1,6 +1,6 @@
 --[=[
     MM2 HUB v2 — combined build
-    Tabs: Combat, Visuals, Movement, Fling, Misc
+    Tabs: Combat, Visuals, Movement, Fling, Farm, Skins, Misc
     PC menu key: L
     Touch devices: floating MM2 OPEN button
 
@@ -67,6 +67,9 @@ local farmCurrentCoin = nil
 local farmNextScan = 0
 local farmLastTouched = setmetatable({}, {__mode = "k"})
 local farmRestoreNoclip = false
+local originalAvatarDescription = nil
+local avatarBusy = false
+local lastAppliedAvatarName = nil
 
 local function trackExternal(connection)
     table.insert(externalConns, connection)
@@ -1453,6 +1456,107 @@ local function safeFling(getTarget, label)
 end
 
 -- ══════════════════════════════════════════════
+-- LOCAL AVATAR LOOKUP BY ROBLOX USERNAME
+-- This changes only the local character appearance where the client allows it.
+-- It does not unlock MM2 knife/gun cosmetics or change server inventory.
+-- ══════════════════════════════════════════════
+local function fetchAvatarDescription(userId)
+    local ok, description = pcall(function()
+        if Players.GetHumanoidDescriptionFromUserIdAsync then
+            return Players:GetHumanoidDescriptionFromUserIdAsync(userId)
+        end
+        -- Compatibility fallback for older Roblox clients.
+        return Players:GetHumanoidDescriptionFromUserId(userId)
+    end)
+    if not ok then
+        error(description)
+    end
+    return description
+end
+
+local function applyDescriptionToLocalCharacter(description)
+    local humanoid = getHum()
+    if not humanoid then
+        error("Персонаж не загружен")
+    end
+
+    if not originalAvatarDescription then
+        local ok, original = pcall(function()
+            return humanoid:GetAppliedDescription()
+        end)
+        if ok and original then
+            originalAvatarDescription = original
+        end
+    end
+
+    if humanoid.ApplyDescriptionResetAsync then
+        humanoid:ApplyDescriptionResetAsync(description)
+    elseif humanoid.ApplyDescriptionAsync then
+        humanoid:ApplyDescriptionAsync(description)
+    else
+        humanoid:ApplyDescription(description)
+    end
+end
+
+local function applyAvatarByUsername(rawUsername)
+    local username = tostring(rawUsername or ""):match("^%s*(.-)%s*$")
+    if username == "" then
+        setStatus("Введи Roblox username", Color3.fromRGB(228, 96, 106))
+        return
+    end
+    if avatarBusy then
+        setStatus("Уже загружаю аватар...", Color3.fromRGB(232, 176, 78))
+        return
+    end
+
+    avatarBusy = true
+    task.spawn(function()
+        local ok, err = pcall(function()
+            setStatus("Ищу пользователя: " .. username, Color3.fromRGB(232, 176, 78))
+            local userId = Players:GetUserIdFromNameAsync(username)
+            local description = fetchAvatarDescription(userId)
+            if not description then
+                error("Не удалось получить описание аватара")
+            end
+
+            setStatus("Применяю внешний вид @" .. username, Color3.fromRGB(232, 176, 78))
+            applyDescriptionToLocalCharacter(description)
+            lastAppliedAvatarName = username
+            setStatus("Аватар @" .. username .. " применён локально", Color3.fromRGB(74, 200, 140))
+        end)
+
+        if not ok then
+            setStatus("Ошибка смены аватара: " .. tostring(err), Color3.fromRGB(228, 96, 106))
+        end
+        avatarBusy = false
+    end)
+end
+
+local function restoreOriginalAvatar()
+    if avatarBusy then
+        setStatus("Дождись завершения загрузки аватара", Color3.fromRGB(232, 176, 78))
+        return
+    end
+    if not originalAvatarDescription then
+        setStatus("Исходный вид ещё не сохранён", Color3.fromRGB(228, 96, 106))
+        return
+    end
+
+    avatarBusy = true
+    task.spawn(function()
+        local ok, err = pcall(function()
+            applyDescriptionToLocalCharacter(originalAvatarDescription)
+            lastAppliedAvatarName = nil
+            setStatus("Исходный аватар восстановлен локально", Color3.fromRGB(74, 200, 140))
+        end)
+        if not ok then
+            setStatus("Ошибка восстановления: " .. tostring(err), Color3.fromRGB(228, 96, 106))
+        end
+        avatarBusy = false
+    end)
+end
+
+-- ══════════════════════════════════════════════
 -- CREATE PAGES
 -- ══════════════════════════════════════════════
 local pCombat = createTab("Combat", "⚔")
@@ -1461,6 +1565,7 @@ local pMove = createTab("Movement", "🏃")
 local pFling = createTab("Fling", "🌀")
 local pMisc = createTab("Misc", "⚙")
 local pFarm = createTab("Farm", "🪙")
+local pSkins = createTab("Skins", "🎭")
 
 -- Combat
 addSection(pCombat, "Убийца")
@@ -1517,6 +1622,55 @@ end)
 addButton(pFarm, "■  Остановить фарм", function()
     setCoinFarm(false)
 end, Color3.fromRGB(150, 60, 80))
+
+-- Skins / avatar by username
+addSection(pSkins, "Смена внешнего вида по нику")
+local skinInfo = Instance.new("TextLabel")
+skinInfo.Size = UDim2.new(1, 0, 0, 54)
+skinInfo.BackgroundTransparency = 1
+skinInfo.Font = Enum.Font.Gotham
+skinInfo.TextSize = 11
+skinInfo.TextWrapped = true
+skinInfo.TextYAlignment = Enum.TextYAlignment.Top
+skinInfo.TextXAlignment = Enum.TextXAlignment.Left
+skinInfo.TextColor3 = DIM
+skinInfo.Text = "Введи Roblox username игрока (именно username, не Display Name), чтобы попробовать скопировать его аватар: одежду, аксессуары и тип тела. Изменение локальное и может быть отменено сервером/игрой."
+skinInfo.Parent = pSkins
+
+local skinNameBox = Instance.new("TextBox")
+skinNameBox.Size = UDim2.new(1, 0, 0, 36)
+skinNameBox.BackgroundColor3 = ITEM
+skinNameBox.BorderSizePixel = 0
+skinNameBox.Font = Enum.Font.Gotham
+skinNameBox.TextSize = 13
+skinNameBox.TextColor3 = TEXT
+skinNameBox.PlaceholderColor3 = DIM
+skinNameBox.PlaceholderText = "Например: Builderman"
+skinNameBox.Text = ""
+skinNameBox.ClearTextOnFocus = false
+skinNameBox.TextXAlignment = Enum.TextXAlignment.Left
+skinNameBox.Parent = pSkins
+corner(skinNameBox, 8)
+local skinBoxPadding = Instance.new("UIPadding")
+skinBoxPadding.PaddingLeft = UDim.new(0, 12)
+skinBoxPadding.PaddingRight = UDim.new(0, 12)
+skinBoxPadding.Parent = skinNameBox
+
+addButton(pSkins, "🎭  Применить аватар по нику", function()
+    applyAvatarByUsername(skinNameBox.Text)
+end, ACCENT)
+addButton(pSkins, "↩  Вернуть мой исходный вид", restoreOriginalAvatar, ITEM)
+local skinStatus = Instance.new("TextLabel")
+skinStatus.Size = UDim2.new(1, 0, 0, 32)
+skinStatus.BackgroundTransparency = 1
+skinStatus.Font = Enum.Font.Gotham
+skinStatus.TextSize = 10
+skinStatus.TextWrapped = true
+skinStatus.TextXAlignment = Enum.TextXAlignment.Left
+skinStatus.TextYAlignment = Enum.TextYAlignment.Top
+skinStatus.TextColor3 = DIM
+skinStatus.Text = "Это меняет только внешний вид персонажа на твоём клиенте. Ножи и пистолеты MM2 не разблокируются."
+skinStatus.Parent = pSkins
 
 -- Visuals
 addSection(pVisual, "ESP игроков")
