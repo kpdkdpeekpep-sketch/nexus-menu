@@ -1,10 +1,10 @@
 --[=[
-    NEXUS MM2 HUB v3 — ultimate build
+    NEXUS MM2 HUB v3.1 — polished interface build
     Tabs: Combat, Visuals, Movement, Trolling, Fling, Farm, Skins, Stats, Misc
     PC menu key: L
     Touch devices: floating MM2 OPEN button
 
-    Note: client-side actions (auto-shoot, gun pickup and fling) depend on
+    Note: client-side actions (knife touch, auto-shoot, gun pickup and fling) depend on
     the current MM2 implementation and Roblox server ownership/validation.
     True invisibility, forced death, and restricted-room teleports require server authority
     and are intentionally not faked by this client script.
@@ -175,12 +175,15 @@ end
 -- ══════════════════════════════════════════════
 -- GUI BASE
 -- ══════════════════════════════════════════════
-local ACCENT = Color3.fromRGB(122, 100, 255)
-local BG = Color3.fromRGB(22, 22, 30)
-local PANEL = Color3.fromRGB(30, 30, 41)
-local ITEM = Color3.fromRGB(40, 40, 54)
-local TEXT = Color3.fromRGB(235, 235, 245)
-local DIM = Color3.fromRGB(150, 150, 170)
+local ACCENT = Color3.fromRGB(139, 112, 255)
+local ACCENT_BRIGHT = Color3.fromRGB(111, 190, 255)
+local BG = Color3.fromRGB(15, 17, 27)
+local PANEL = Color3.fromRGB(24, 27, 41)
+local ITEM = Color3.fromRGB(32, 36, 53)
+local ITEM_HOVER = Color3.fromRGB(43, 48, 70)
+local TEXT = Color3.fromRGB(242, 244, 255)
+local DIM = Color3.fromRGB(145, 153, 177)
+local SUCCESS = Color3.fromRGB(89, 218, 170)
 
 local guiParent
 if EXECUTOR_CAPS.gethui then
@@ -395,48 +398,118 @@ local function playLoadingAnimation()
     end)
 end
 
+local touchLayout = UserInputService.TouchEnabled
+local initialViewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize
+    or Vector2.new(1280, 720)
+local initialWidth = touchLayout
+    and math.max(280, math.min(430, initialViewport.X - 16))
+    or math.max(440, math.min(760, initialViewport.X - 32))
+local initialHeight = touchLayout
+    and math.max(420, math.min(680, initialViewport.Y - 112))
+    or math.max(450, math.min(580, initialViewport.Y * 0.66))
+
 local win = Instance.new("Frame")
 win.Name = "MainWindow"
-win.Size = UDim2.fromOffset(520, 360)
-win.Position = UDim2.new(0.5, -260, 0.5, -180)
+win.Size = UDim2.fromOffset(initialWidth, initialHeight)
+win.Position = UDim2.new(0.5, -initialWidth / 2, 0.5, -initialHeight / 2)
 win.BackgroundColor3 = BG
 win.BorderSizePixel = 0
+win.ClipsDescendants = true
 win.Parent = gui
-corner(win, 12)
-stroke(win)
+corner(win, 16)
+local winStroke = stroke(win, Color3.fromRGB(95, 89, 160), 1.25)
+local winGradient = Instance.new("UIGradient")
+winGradient.Rotation = 35
+winGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(22, 25, 40)),
+    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(15, 17, 27)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(25, 20, 43)),
+})
+winGradient.Parent = win
 
 -- Header / dragging
 local top = Instance.new("Frame")
 top.Name = "Header"
-top.Size = UDim2.new(1, 0, 0, 38)
+top.Size = UDim2.new(1, 0, 0, 48)
 top.BackgroundColor3 = PANEL
 top.BorderSizePixel = 0
 top.Parent = win
-corner(top, 12)
+corner(top, 16)
 
 local topFix = Instance.new("Frame")
-topFix.Size = UDim2.new(1, 0, 0, 12)
-topFix.Position = UDim2.new(0, 0, 1, -12)
+topFix.Size = UDim2.new(1, 0, 0, 16)
+topFix.Position = UDim2.new(0, 0, 1, -16)
 topFix.BackgroundColor3 = PANEL
 topFix.BorderSizePixel = 0
 topFix.Parent = top
 
+local headerGradient = Instance.new("UIGradient")
+headerGradient.Rotation = 0
+headerGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(37, 42, 65)),
+    ColorSequenceKeypoint.new(0.52, Color3.fromRGB(29, 31, 49)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(48, 35, 72)),
+})
+headerGradient.Parent = top
+
+local logoBadge = Instance.new("Frame")
+logoBadge.Size = UDim2.fromOffset(30, 30)
+logoBadge.Position = UDim2.fromOffset(10, 9)
+logoBadge.BackgroundColor3 = ACCENT
+logoBadge.BorderSizePixel = 0
+logoBadge.Parent = top
+corner(logoBadge, 10)
+local logoGradient = Instance.new("UIGradient")
+logoGradient.Rotation = 35
+logoGradient.Color = ColorSequence.new(ACCENT_BRIGHT, ACCENT)
+logoGradient.Parent = logoBadge
+local logoText = Instance.new("TextLabel")
+logoText.Size = UDim2.fromScale(1, 1)
+logoText.BackgroundTransparency = 1
+logoText.Font = Enum.Font.GothamBlack
+logoText.Text = "N"
+logoText.TextSize = 18
+logoText.TextColor3 = Color3.new(1, 1, 1)
+logoText.Parent = logoBadge
+
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -90, 1, 0)
-title.Position = UDim2.fromOffset(14, 0)
+title.Size = UDim2.new(1, -210, 0, 23)
+title.Position = UDim2.fromOffset(48, 4)
 title.BackgroundTransparency = 1
 title.Font = Enum.Font.GothamBold
 title.TextSize = 15
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = TEXT
-title.Text = "NEXUS MM2 <font color='#7a64ff'>v3</font>"
+title.Text = "NEXUS <font color='#9c88ff'>MM2</font> HUB"
 title.RichText = true
 title.Parent = top
 
+local titleSubtitle = Instance.new("TextLabel")
+titleSubtitle.Size = UDim2.new(1, -210, 0, 15)
+titleSubtitle.Position = UDim2.fromOffset(49, 26)
+titleSubtitle.BackgroundTransparency = 1
+titleSubtitle.Font = Enum.Font.GothamMedium
+titleSubtitle.TextSize = 9
+titleSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+titleSubtitle.TextColor3 = DIM
+titleSubtitle.Text = "ULTIMATE EDITION  •  SOLARA BUILD"
+titleSubtitle.Parent = top
+
+local versionPill = Instance.new("TextLabel")
+versionPill.Size = UDim2.fromOffset(48, 19)
+versionPill.Position = UDim2.new(1, -151, 0, 14)
+versionPill.BackgroundColor3 = Color3.fromRGB(69, 58, 116)
+versionPill.Text = "V3.1"
+versionPill.Font = Enum.Font.GothamBold
+versionPill.TextSize = 9
+versionPill.TextColor3 = TEXT
+versionPill.Parent = top
+corner(versionPill, 7)
+
 local function headButton(text, xOffset, color)
     local button = Instance.new("TextButton")
-    button.Size = UDim2.fromOffset(26, 26)
-    button.Position = UDim2.new(1, xOffset, 0, 6)
+    button.Size = UDim2.fromOffset(28, 28)
+    button.Position = UDim2.new(1, xOffset, 0, 10)
     button.BackgroundColor3 = color
     button.Text = text
     button.Font = Enum.Font.GothamBold
@@ -448,8 +521,8 @@ local function headButton(text, xOffset, color)
     return button
 end
 
-local closeBtn = headButton("✕", -34, Color3.fromRGB(200, 70, 80))
-local hideBtn = headButton("–", -66, ITEM)
+local closeBtn = headButton("×", -38, Color3.fromRGB(190, 70, 88))
+local hideBtn = headButton("–", -72, Color3.fromRGB(57, 62, 83))
 
 local dragging = false
 local dragStart
@@ -484,62 +557,127 @@ trackExternal(UserInputService.InputEnded:Connect(function(input)
     end
 end))
 
--- Sidebar
+-- Sidebar / content shell
 local side = Instance.new("ScrollingFrame")
-side.Size = UDim2.new(0, 120, 1, -50)
+side.Size = UDim2.new(0, touchLayout and 88 or 142, 1, -104)
 side.CanvasSize = UDim2.new()
 side.AutomaticCanvasSize = Enum.AutomaticSize.Y
 side.ScrollingDirection = Enum.ScrollingDirection.Y
 side.ScrollBarThickness = 2
 side.ScrollBarImageColor3 = ACCENT
-side.Position = UDim2.fromOffset(8, 44)
+side.Position = UDim2.fromOffset(10, 58)
 side.BackgroundColor3 = PANEL
 side.BorderSizePixel = 0
 side.Parent = win
-corner(side, 10)
+corner(side, 12)
+stroke(side, Color3.fromRGB(49, 54, 78), 1)
 
 local sideLayout = Instance.new("UIListLayout")
-sideLayout.Padding = UDim.new(0, 4)
+sideLayout.Padding = UDim.new(0, 5)
 sideLayout.Parent = side
 
 local sidePadding = Instance.new("UIPadding")
-sidePadding.PaddingTop = UDim.new(0, 6)
+sidePadding.PaddingTop = UDim.new(0, 8)
 sidePadding.PaddingLeft = UDim.new(0, 6)
 sidePadding.PaddingRight = UDim.new(0, 6)
+sidePadding.PaddingBottom = UDim.new(0, 8)
 sidePadding.Parent = side
 
 local content = Instance.new("Frame")
-content.Size = UDim2.new(1, -144, 1, -66)
-content.Position = UDim2.fromOffset(136, 44)
+content.Size = UDim2.new(1, touchLayout and -112 or -170, 1, -104)
+content.Position = UDim2.fromOffset(touchLayout and 100 or 162, 58)
 content.BackgroundTransparency = 1
 content.Parent = win
+
+local contentHeader = Instance.new("Frame")
+contentHeader.Name = "PageHeader"
+contentHeader.Size = UDim2.new(1, 0, 0, 38)
+contentHeader.BackgroundColor3 = PANEL
+contentHeader.BorderSizePixel = 0
+contentHeader.Parent = content
+corner(contentHeader, 10)
+stroke(contentHeader, Color3.fromRGB(48, 53, 76), 1)
+
+local activePageTitle = Instance.new("TextLabel")
+activePageTitle.Size = UDim2.new(1, -20, 0, 20)
+activePageTitle.Position = UDim2.fromOffset(11, 3)
+activePageTitle.BackgroundTransparency = 1
+activePageTitle.Font = Enum.Font.GothamBold
+activePageTitle.TextSize = 13
+activePageTitle.TextColor3 = TEXT
+activePageTitle.TextXAlignment = Enum.TextXAlignment.Left
+activePageTitle.Text = "COMBAT"
+activePageTitle.Parent = contentHeader
+
+local activePageSubtitle = Instance.new("TextLabel")
+activePageSubtitle.Size = UDim2.new(1, -20, 0, 12)
+activePageSubtitle.Position = UDim2.fromOffset(11, 21)
+activePageSubtitle.BackgroundTransparency = 1
+activePageSubtitle.Font = Enum.Font.Gotham
+activePageSubtitle.TextSize = 9
+activePageSubtitle.TextColor3 = DIM
+activePageSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+activePageSubtitle.Text = "Gameplay controls and tools"
+activePageSubtitle.Parent = contentHeader
 
 -- ══════════════════════════════════════════════
 -- TABS / GUI ELEMENTS
 -- ══════════════════════════════════════════════
 local tabs = {}
 
+local PAGE_HINTS = {
+    Combat = "Combat tools and role-based actions",
+    Visuals = "Player highlights and item markers",
+    Movement = "Character movement and mobility",
+    Trolling = "Local-only visual effects",
+    Fling = "Movement physics test controls",
+    Misc = "Menu, utilities and cleanup",
+    Farm = "Coin collection controls",
+    Skins = "Avatar appearance tools",
+    Stats = "Performance and session utilities",
+}
+
+local TAB_SHORT = {
+    Combat = "Combat", Visuals = "Visual", Movement = "Move",
+    Trolling = "Troll", Fling = "Fling", Misc = "Misc",
+    Farm = "Farm", Skins = "Skins", Stats = "Stats",
+}
+
 local function createTab(name, icon)
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, 0, 0, 32)
+    button.Name = "Tab_" .. name
+    button.Size = UDim2.new(1, 0, 0, touchLayout and 34 or 38)
     button.BackgroundColor3 = ITEM
     button.BackgroundTransparency = 1
     button.Font = Enum.Font.GothamSemibold
-    button.TextSize = 13
+    button.TextSize = touchLayout and 10 or 12
     button.TextColor3 = DIM
-    button.Text = icon .. "  " .. name
+    button.Text = icon .. (touchLayout and " " .. (TAB_SHORT[name] or name) or "   " .. name)
     button.TextXAlignment = Enum.TextXAlignment.Left
     button.AutoButtonColor = false
     button.Parent = side
-    corner(button, 8)
+    corner(button, 9)
 
     local padding = Instance.new("UIPadding")
-    padding.PaddingLeft = UDim.new(0, 10)
+    padding.PaddingLeft = UDim.new(0, touchLayout and 6 or 10)
     padding.Parent = button
 
+    local marker = Instance.new("Frame")
+    marker.Name = "ActiveMarker"
+    marker.Size = UDim2.new(0, 3, 0, 18)
+    marker.Position = UDim2.new(0, 0, 0.5, -9)
+    marker.BackgroundColor3 = ACCENT_BRIGHT
+    marker.BorderSizePixel = 0
+    marker.Visible = false
+    marker.Parent = button
+    corner(marker, 3)
+
     local page = Instance.new("ScrollingFrame")
-    page.Size = UDim2.new(1, 0, 1, 0)
-    page.BackgroundTransparency = 1
+    page.Name = "Page_" .. name
+    page.Position = UDim2.fromOffset(0, 46)
+    page.Size = UDim2.new(1, 0, 1, -46)
+    page.BackgroundColor3 = Color3.fromRGB(19, 22, 34)
+    page.BackgroundTransparency = 0.12
     page.BorderSizePixel = 0
     page.ScrollBarThickness = 3
     page.ScrollBarImageColor3 = ACCENT
@@ -547,78 +685,111 @@ local function createTab(name, icon)
     page.CanvasSize = UDim2.new()
     page.Visible = false
     page.Parent = content
+    corner(page, 10)
 
     local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 6)
+    layout.Padding = UDim.new(0, 7)
     layout.Parent = page
 
     local pagePadding = Instance.new("UIPadding")
-    pagePadding.PaddingRight = UDim.new(0, 6)
+    pagePadding.PaddingTop = UDim.new(0, 9)
+    pagePadding.PaddingLeft = UDim.new(0, 9)
+    pagePadding.PaddingRight = UDim.new(0, 9)
+    pagePadding.PaddingBottom = UDim.new(0, 10)
     pagePadding.Parent = page
 
-    tabs[name] = {btn = button, page = page}
+    tabs[name] = {btn = button, page = page, marker = marker, icon = icon}
+
+    button.MouseEnter:Connect(function()
+        if page.Visible then return end
+        tween(button, 0.12, {BackgroundTransparency = 0.35, BackgroundColor3 = ITEM_HOVER})
+    end)
+    button.MouseLeave:Connect(function()
+        if page.Visible then return end
+        tween(button, 0.12, {BackgroundTransparency = 1})
+    end)
 
     button.MouseButton1Click:Connect(function()
-        for _, tab in pairs(tabs) do
+        for tabName, tab in pairs(tabs) do
             tab.page.Visible = false
-            tween(tab.btn, 0.15, {
+            tab.marker.Visible = false
+            tween(tab.btn, 0.14, {
                 BackgroundTransparency = 1,
                 TextColor3 = DIM,
             })
         end
         page.Visible = true
-        tween(button, 0.15, {
+        marker.Visible = true
+        tween(button, 0.16, {
             BackgroundTransparency = 0,
+            BackgroundColor3 = Color3.fromRGB(51, 48, 82),
             TextColor3 = TEXT,
         })
+        activePageTitle.Text = string.upper(name)
+        activePageSubtitle.Text = PAGE_HINTS[name] or "NEXUS tools"
     end)
 
     return page
 end
 
 local function addSection(page, sectionText)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(1, 0, 0, 24)
+    holder.BackgroundTransparency = 1
+    holder.Parent = page
+
+    local accentBar = Instance.new("Frame")
+    accentBar.Size = UDim2.fromOffset(3, 12)
+    accentBar.Position = UDim2.fromOffset(1, 6)
+    accentBar.BackgroundColor3 = ACCENT
+    accentBar.BorderSizePixel = 0
+    accentBar.Parent = holder
+    corner(accentBar, 2)
+
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 20)
+    label.Size = UDim2.new(1, -12, 1, 0)
+    label.Position = UDim2.fromOffset(10, 0)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamBold
-    label.TextSize = 11
-    label.TextColor3 = ACCENT
+    label.TextSize = 10
+    label.TextColor3 = ACCENT_BRIGHT
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Text = string.upper(sectionText)
-    label.Parent = page
-    return label
+    label.Parent = holder
+    return holder
 end
 
 local function addToggle(page, labelText, defaultValue, callback)
     local row = Instance.new("TextButton")
-    row.Size = UDim2.new(1, 0, 0, 36)
+    row.Size = UDim2.new(1, 0, 0, touchLayout and 39 or 42)
     row.BackgroundColor3 = ITEM
     row.Text = ""
     row.AutoButtonColor = false
     row.Parent = page
-    corner(row, 8)
+    corner(row, 10)
+    stroke(row, Color3.fromRGB(48, 53, 75), 0.7)
 
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -60, 1, 0)
-    label.Position = UDim2.fromOffset(12, 0)
+    label.Size = UDim2.new(1, -66, 1, 0)
+    label.Position = UDim2.fromOffset(13, 0)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamMedium
-    label.TextSize = 13
+    label.TextSize = touchLayout and 11 or 12
     label.TextColor3 = TEXT
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Text = labelText
     label.Parent = row
 
     local pill = Instance.new("Frame")
-    pill.Size = UDim2.fromOffset(38, 20)
-    pill.Position = UDim2.new(1, -50, 0.5, -10)
-    pill.BackgroundColor3 = Color3.fromRGB(70, 70, 90)
+    pill.Size = UDim2.fromOffset(40, 22)
+    pill.Position = UDim2.new(1, -51, 0.5, -11)
+    pill.BackgroundColor3 = Color3.fromRGB(59, 65, 86)
     pill.Parent = row
-    corner(pill, 10)
+    corner(pill, 11)
 
     local knob = Instance.new("Frame")
     knob.Size = UDim2.fromOffset(16, 16)
-    knob.Position = UDim2.new(0, 2, 0.5, -8)
+    knob.Position = UDim2.new(0, 3, 0.5, -8)
     knob.BackgroundColor3 = Color3.new(1, 1, 1)
     knob.Parent = pill
     corner(knob, 8)
@@ -626,19 +797,28 @@ local function addToggle(page, labelText, defaultValue, callback)
     local enabled = false
     local function set(value, silent)
         enabled = value == true
-        tween(pill, 0.15, {
-            BackgroundColor3 = enabled and ACCENT or Color3.fromRGB(70, 70, 90),
+        tween(pill, 0.16, {
+            BackgroundColor3 = enabled and ACCENT or Color3.fromRGB(59, 65, 86),
         })
-        tween(knob, 0.15, {
+        tween(knob, 0.16, {
             Position = enabled
-                and UDim2.new(1, -18, 0.5, -8)
-                or UDim2.new(0, 2, 0.5, -8),
+                and UDim2.new(1, -19, 0.5, -8)
+                or UDim2.new(0, 3, 0.5, -8),
+        })
+        tween(row, 0.12, {
+            BackgroundColor3 = enabled and Color3.fromRGB(39, 39, 64) or ITEM,
         })
         if not silent and callback then
             callback(enabled)
         end
     end
 
+    row.MouseEnter:Connect(function()
+        if not enabled then tween(row, 0.12, {BackgroundColor3 = ITEM_HOVER}) end
+    end)
+    row.MouseLeave:Connect(function()
+        if not enabled then tween(row, 0.12, {BackgroundColor3 = ITEM}) end
+    end)
     row.MouseButton1Click:Connect(function()
         set(not enabled, false)
     end)
@@ -652,17 +832,18 @@ end
 
 local function addSlider(page, labelText, minimum, maximum, defaultValue, callback)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, 0, 0, 50)
+    row.Size = UDim2.new(1, 0, 0, 58)
     row.BackgroundColor3 = ITEM
     row.Parent = page
-    corner(row, 8)
+    corner(row, 10)
+    stroke(row, Color3.fromRGB(48, 53, 75), 0.7)
 
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(1, -70, 0, 24)
     label.Position = UDim2.fromOffset(12, 2)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.GothamMedium
-    label.TextSize = 13
+    label.TextSize = touchLayout and 11 or 12
     label.TextColor3 = TEXT
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Text = labelText
@@ -680,7 +861,7 @@ local function addSlider(page, labelText, minimum, maximum, defaultValue, callba
 
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(1, -24, 0, 6)
-    bar.Position = UDim2.fromOffset(12, 34)
+    bar.Position = UDim2.fromOffset(12, 42)
     bar.BackgroundColor3 = Color3.fromRGB(65, 65, 85)
     bar.Parent = row
     corner(bar, 3)
@@ -690,6 +871,9 @@ local function addSlider(page, labelText, minimum, maximum, defaultValue, callba
     fill.Size = UDim2.new(0, 0, 1, 0)
     fill.Parent = bar
     corner(fill, 3)
+    local sliderGradient = Instance.new("UIGradient")
+    sliderGradient.Color = ColorSequence.new(ACCENT_BRIGHT, ACCENT)
+    sliderGradient.Parent = fill
 
     local function setValue(value)
         value = math.clamp(math.floor(value + 0.5), minimum, maximum)
@@ -734,16 +918,39 @@ local function addSlider(page, labelText, minimum, maximum, defaultValue, callba
 end
 
 local function addButton(page, buttonText, callback, color)
+    local baseColor = color or ITEM
     local button = Instance.new("TextButton")
-    button.Size = UDim2.new(1, 0, 0, 34)
-    button.BackgroundColor3 = color or ITEM
+    button.Size = UDim2.new(1, 0, 0, touchLayout and 36 or 38)
+    button.BackgroundColor3 = baseColor
     button.Font = Enum.Font.GothamSemibold
-    button.TextSize = 13
+    button.TextSize = touchLayout and 11 or 12
     button.TextColor3 = TEXT
     button.Text = buttonText
-    button.AutoButtonColor = true
+    button.AutoButtonColor = false
     button.Parent = page
-    corner(button, 8)
+    corner(button, 10)
+    stroke(button, Color3.fromRGB(64, 70, 100), 0.8)
+
+    local buttonGradient = Instance.new("UIGradient")
+    buttonGradient.Rotation = 0
+    buttonGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, baseColor:Lerp(ACCENT, 0.12)),
+        ColorSequenceKeypoint.new(1, baseColor),
+    })
+    buttonGradient.Parent = button
+
+    button.MouseEnter:Connect(function()
+        tween(button, 0.12, {BackgroundColor3 = baseColor:Lerp(Color3.new(1, 1, 1), 0.09)})
+    end)
+    button.MouseLeave:Connect(function()
+        tween(button, 0.12, {BackgroundColor3 = baseColor})
+    end)
+    button.MouseButton1Down:Connect(function()
+        tween(button, 0.06, {BackgroundColor3 = baseColor:Lerp(Color3.new(0, 0, 0), 0.12)})
+    end)
+    button.MouseButton1Up:Connect(function()
+        tween(button, 0.1, {BackgroundColor3 = baseColor:Lerp(Color3.new(1, 1, 1), 0.09)})
+    end)
     button.MouseButton1Click:Connect(function()
         if callback then
             callback(button)
@@ -752,23 +959,100 @@ local function addButton(page, buttonText, callback, color)
     return button
 end
 
--- Status label
+-- Bottom status pill
+local statusPanel = Instance.new("Frame")
+statusPanel.Name = "StatusBar"
+statusPanel.Size = UDim2.new(1, touchLayout and -112 or -170, 0, 24)
+statusPanel.Position = UDim2.new(0, touchLayout and 100 or 162, 1, -33)
+statusPanel.BackgroundColor3 = PANEL
+statusPanel.BorderSizePixel = 0
+statusPanel.Parent = win
+corner(statusPanel, 8)
+
+local statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.fromOffset(7, 7)
+statusDot.Position = UDim2.fromOffset(9, 8.5)
+statusDot.BackgroundColor3 = SUCCESS
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusPanel
+corner(statusDot, 4)
+
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Size = UDim2.new(1, -150, 0, 14)
-statusLbl.Position = UDim2.new(0, 136, 1, -16)
+statusLbl.Size = UDim2.new(1, -28, 1, 0)
+statusLbl.Position = UDim2.fromOffset(23, 0)
 statusLbl.BackgroundTransparency = 1
-statusLbl.Font = Enum.Font.Gotham
-statusLbl.TextSize = 11
+statusLbl.Font = Enum.Font.GothamMedium
+statusLbl.TextSize = touchLayout and 9 or 10
 statusLbl.TextColor3 = DIM
 statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+statusLbl.TextTruncate = Enum.TextTruncate.AtEnd
 statusLbl.Text = "Готово"
-statusLbl.Parent = win
+statusLbl.Parent = statusPanel
 
 local function setStatus(message, color)
     if statusLbl and statusLbl.Parent then
         statusLbl.Text = tostring(message)
         statusLbl.TextColor3 = color or DIM
+        if statusDot and statusDot.Parent then
+            statusDot.BackgroundColor3 = color or SUCCESS
+        end
     end
+end
+
+local function updateResponsiveLayout()
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or initialViewport
+    local isTouch = UserInputService.TouchEnabled
+    local width, height
+
+    if isTouch then
+        width = math.max(280, math.min(430, viewport.X - 16))
+        height = math.max(420, math.min(680, viewport.Y - 112))
+        side.Size = UDim2.new(0, 88, 1, -104)
+        side.Position = UDim2.fromOffset(8, 58)
+        content.Position = UDim2.fromOffset(100, 58)
+        content.Size = UDim2.new(1, -112, 1, -104)
+        statusPanel.Position = UDim2.new(0, 100, 1, -33)
+        statusPanel.Size = UDim2.new(1, -112, 0, 24)
+    else
+        width = math.max(440, math.min(760, viewport.X - 32))
+        height = math.max(450, math.min(580, viewport.Y * 0.66))
+        side.Size = UDim2.new(0, 142, 1, -104)
+        side.Position = UDim2.fromOffset(10, 58)
+        content.Position = UDim2.fromOffset(162, 58)
+        content.Size = UDim2.new(1, -174, 1, -104)
+        statusPanel.Position = UDim2.new(0, 162, 1, -33)
+        statusPanel.Size = UDim2.new(1, -174, 0, 24)
+    end
+
+    win.Size = UDim2.fromOffset(width, height)
+    win.Position = UDim2.new(0.5, -width / 2, 0.5, -height / 2)
+
+    for name, tab in pairs(tabs) do
+        tab.btn.Size = UDim2.new(1, 0, 0, isTouch and 34 or 38)
+        tab.btn.TextSize = isTouch and 10 or 12
+        tab.btn.Text = tab.icon .. (isTouch and " " .. (TAB_SHORT[name] or name) or "   " .. name)
+        tab.page.Position = UDim2.fromOffset(0, 46)
+        tab.page.Size = UDim2.new(1, 0, 1, -46)
+    end
+
+    statusLbl.TextSize = isTouch and 9 or 10
+    if isTouch and width < 340 then
+        title.Size = UDim2.new(1, -110, 0, 23)
+        title.Text = "NEXUS MM2"
+        titleSubtitle.Visible = false
+        versionPill.Visible = false
+    else
+        title.Size = UDim2.new(1, -210, 0, 23)
+        title.Text = "NEXUS <font color='#9c88ff'>MM2</font> HUB"
+        titleSubtitle.Visible = true
+        versionPill.Visible = width >= 340
+    end
+end
+
+updateResponsiveLayout()
+if workspace.CurrentCamera then
+    trackExternal(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateResponsiveLayout))
 end
 
 -- ══════════════════════════════════════════════
@@ -912,10 +1196,106 @@ end
 -- ══════════════════════════════════════════════
 -- MOVEMENT / COMBAT FUNCTIONS
 -- ══════════════════════════════════════════════
+-- Shared knife-contact logic used by both Kill Aura and Kill All.
+-- It mirrors the GunDrop pickup pattern: firetouchinterest(partA, partB, 0/1).
+-- The MM2 server still validates whether a knife hit actually counts.
+local lastKnifeTouch = setmetatable({}, {__mode = "k"})
+local KNIFE_TOUCH_COOLDOWN = 0.30
+
+local function getKnifeHandle(knife)
+    if not knife then
+        return nil
+    end
+    local handle = knife:FindFirstChild("Handle")
+    if handle and handle:IsA("BasePart") then
+        return handle
+    end
+    return knife:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function simulateTouch(partA, partB)
+    if not partA or not partB or not partA:IsA("BasePart") or not partB:IsA("BasePart") then
+        return false
+    end
+    if typeof(firetouchinterest) ~= "function" then
+        return false
+    end
+
+    local began = pcall(function()
+        firetouchinterest(partA, partB, 0)
+    end)
+    pcall(function()
+        firetouchinterest(partA, partB, 1)
+    end)
+    return began
+end
+
+local function attemptKnifeHit(target)
+    if not target or target == lp or target.Parent ~= Players then
+        return false
+    end
+
+    local myCharacter = lp.Character
+    local myHRP = getHRP()
+    local myHumanoid = getHum()
+    local targetCharacter = target.Character
+    local targetHRP = getHRP(target)
+    local targetHumanoid = getHum(target)
+
+    if not myCharacter or not myHRP or not myHumanoid or myHumanoid.Health <= 0
+        or not targetCharacter or not targetHRP or not targetHumanoid or targetHumanoid.Health <= 0 then
+        return false
+    end
+
+    local knife = findTool(lp, "Knife")
+    if not knife then
+        return false
+    end
+
+    -- Equip first; the next tick can perform the touch once the tool is equipped.
+    if knife.Parent ~= myCharacter then
+        pcall(function()
+            myHumanoid:EquipTool(knife)
+        end)
+        return false
+    end
+
+    local now = os.clock()
+    if now - (lastKnifeTouch[target] or 0) < KNIFE_TOUCH_COOLDOWN then
+        return false
+    end
+    lastKnifeTouch[target] = now
+
+    local handle = getKnifeHandle(knife)
+    local touched = false
+
+    -- Same 0 -> 1 touch sequence as the GunDrop auto-pickup function.
+    if handle and typeof(firetouchinterest) == "function" then
+        local bodyParts = {
+            targetHRP,
+            targetCharacter:FindFirstChild("Head"),
+            targetCharacter:FindFirstChild("UpperTorso"),
+            targetCharacter:FindFirstChild("Torso"),
+        }
+        for _, part in ipairs(bodyParts) do
+            if part and part:IsA("BasePart") then
+                touched = simulateTouch(handle, part) or touched
+            end
+        end
+    end
+
+    -- Also activate the equipped knife through its normal Tool interface.
+    pcall(function()
+        knife:Activate()
+    end)
+
+    return touched or true
+end
+
 local function killAuraTick()
     local myHRP = getHRP()
     local humanoid = getHum()
-    if not myHRP or not humanoid then
+    if not myHRP or not humanoid or humanoid.Health <= 0 then
         return
     end
 
@@ -923,7 +1303,6 @@ local function killAuraTick()
     if not knife then
         return
     end
-
     if knife.Parent ~= lp.Character then
         pcall(function()
             humanoid:EquipTool(knife)
@@ -932,19 +1311,20 @@ local function killAuraTick()
     end
 
     for _, player in ipairs(Players:GetPlayers()) do
-        local targetHumanoid = getHum(player)
-        local targetHRP = getHRP(player)
-        if player ~= lp and targetHumanoid and targetHRP
-            and targetHumanoid.Health > 0
-            and (targetHRP.Position - myHRP.Position).Magnitude <= cfg.killRange then
-            pcall(function()
-                myHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 2)
-                knife:Activate()
-            end)
+        if player ~= lp then
+            local targetHumanoid = getHum(player)
+            local targetHRP = getHRP(player)
+            if targetHumanoid and targetHRP and targetHumanoid.Health > 0
+                and (targetHRP.Position - myHRP.Position).Magnitude <= cfg.killRange then
+                -- Briefly move into knife range, then use the same touch routine as Kill All.
+                pcall(function()
+                    myHRP.CFrame = targetHRP.CFrame * CFrame.new(0, 0, 2)
+                end)
+                attemptKnifeHit(player)
+            end
         end
     end
 end
-
 local function autoGunTick()
     local myHRP = getHRP()
     if not myHRP then
@@ -970,7 +1350,7 @@ local function killAllWithKnife()
     local knife = findTool(lp, "Knife")
     local humanoid = getHum()
     local myHRP = getHRP()
-    if not knife or not humanoid or not myHRP then
+    if not knife or not humanoid or humanoid.Health <= 0 or not myHRP then
         setStatus("Нужен нож и живой персонаж", Color3.fromRGB(228, 96, 106))
         return
     end
@@ -978,38 +1358,47 @@ local function killAllWithKnife()
     killAllBusy = true
     task.spawn(function()
         local origin = myHRP.CFrame
-        if knife.Parent ~= lp.Character then
-            pcall(function() humanoid:EquipTool(knife) end)
-            task.wait(0.2)
-        end
-
         local attempted = 0
-        for _, target in ipairs(Players:GetPlayers()) do
-            if target ~= lp and target.Parent == Players then
-                local targetRoot = getHRP(target)
-                local targetHumanoid = getHum(target)
-                local currentRoot = getHRP()
-                if targetRoot and targetHumanoid and targetHumanoid.Health > 0 and currentRoot then
-                    attempted += 1
-                    setStatus("Атака: " .. target.Name, Color3.fromRGB(232, 176, 78))
-                    pcall(function()
+        local ok, err = pcall(function()
+            if knife.Parent ~= lp.Character then
+                humanoid:EquipTool(knife)
+                task.wait(0.2)
+            end
+
+            for _, target in ipairs(Players:GetPlayers()) do
+                if target ~= lp and target.Parent == Players then
+                    local targetRoot = getHRP(target)
+                    local targetHumanoid = getHum(target)
+                    local currentRoot = getHRP()
+                    if targetRoot and targetHumanoid and targetHumanoid.Health > 0 and currentRoot then
+                        attempted += 1
+                        setStatus("Контакт ножа: " .. target.Name, Color3.fromRGB(232, 176, 78))
                         currentRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 2)
-                        knife:Activate()
-                    end)
-                    task.wait(0.18)
+                        task.wait(0.06)
+                        attemptKnifeHit(target)
+                        task.wait(0.22)
+                    end
                 end
             end
-        end
+        end)
 
         local currentRoot = getHRP()
         if currentRoot and currentRoot.Parent then
-            pcall(function() currentRoot.CFrame = origin end)
+            pcall(function()
+                currentRoot.AssemblyLinearVelocity = Vector3.zero
+                currentRoot.AssemblyAngularVelocity = Vector3.zero
+                currentRoot.CFrame = origin
+            end)
         end
-        setStatus("Попытки атаки: " .. tostring(attempted) .. " · результат зависит от сервера", Color3.fromRGB(232, 176, 78))
+
+        if ok then
+            setStatus("Попыток контакта: " .. tostring(attempted) .. " · подтверждение зависит от сервера", Color3.fromRGB(232, 176, 78))
+        else
+            setStatus("Ошибка Kill All: " .. tostring(err), Color3.fromRGB(228, 96, 106))
+        end
         killAllBusy = false
     end)
 end
-
 local function setNoclip(enabled)
     state.noclip = enabled == true
 
@@ -2734,19 +3123,23 @@ local hidden = false
 
 local mobileButton = Instance.new("TextButton")
 mobileButton.Name = "MobileOpenButton"
-mobileButton.Size = UDim2.fromOffset(64, 54)
-mobileButton.Position = UDim2.new(0, 14, 0.72, 0)
+mobileButton.Size = UDim2.fromOffset(68, 58)
+mobileButton.Position = UDim2.new(0, 14, 0.70, 0)
 mobileButton.BackgroundColor3 = ACCENT
 mobileButton.TextColor3 = Color3.new(1, 1, 1)
 mobileButton.Font = Enum.Font.GothamBold
 mobileButton.TextSize = 12
-mobileButton.Text = "MM2\nOPEN"
+mobileButton.Text = "NEXUS\nOPEN"
 mobileButton.TextWrapped = true
 mobileButton.Visible = false
 mobileButton.AutoButtonColor = true
 mobileButton.Parent = gui
-corner(mobileButton, 13)
-stroke(mobileButton, Color3.fromRGB(170, 150, 255), 1)
+corner(mobileButton, 15)
+stroke(mobileButton, Color3.fromRGB(170, 150, 255), 1.2)
+local mobileButtonGradient = Instance.new("UIGradient")
+mobileButtonGradient.Rotation = 35
+mobileButtonGradient.Color = ColorSequence.new(ACCENT_BRIGHT, ACCENT)
+mobileButtonGradient.Parent = mobileButton
 
 local function setMenuVisible(visible)
     hidden = not visible
@@ -2818,9 +3211,13 @@ addButton(pMisc, "⛔  Выключить всё и закрыть", shutdown, C
 if tabs.Combat then
     tabs.Combat.page.Visible = true
     tabs.Combat.btn.BackgroundTransparency = 0
+    tabs.Combat.btn.BackgroundColor3 = Color3.fromRGB(51, 48, 82)
     tabs.Combat.btn.TextColor3 = TEXT
+    tabs.Combat.marker.Visible = true
+    activePageTitle.Text = "COMBAT"
+    activePageSubtitle.Text = PAGE_HINTS.Combat
 end
 
 setMenuVisible(true)
-setStatus("NEXUS MM2 Hub v3 готов · Solara-safe · L — меню")
+setStatus("NEXUS MM2 Hub v3.1 готов · L — меню")
 playLoadingAnimation()
