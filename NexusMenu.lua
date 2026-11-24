@@ -1,11 +1,13 @@
 --[=[
-    MM2 HUB v2 — combined build
-    Tabs: Combat, Visuals, Movement, Fling, Farm, Skins, Misc
+    NEXUS MM2 HUB v3 — ultimate build
+    Tabs: Combat, Visuals, Movement, Fling, Farm, Skins, Stats, Misc
     PC menu key: L
     Touch devices: floating MM2 OPEN button
 
     Note: client-side actions (auto-shoot, gun pickup and fling) depend on
     the current MM2 implementation and Roblox server ownership/validation.
+    True invisibility, forced death, and restricted-room teleports require server authority
+    and are intentionally not faked by this client script.
     The optional remote loader is disabled by default.
 ]=]
 
@@ -17,8 +19,17 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
 
 local lp = Players.LocalPlayer
+
+-- Solara compatibility: use executor APIs only when they exist; all core UI
+-- features rely on standard client Luau APIs. Optional touch support is detected.
+local EXECUTOR_CAPS = {
+    gethui = type(gethui) == "function",
+    firetouchinterest = type(firetouchinterest) == "function",
+    loadstring = type(loadstring) == "function",
+}
 
 local LOADER_URL = "" -- оставь пустым, если внешний лоадер не нужен
 
@@ -33,6 +44,7 @@ local cfg = {
     shotCooldown = 0.7,
     coinFarmSpeed = 95,
     coinHeight = 4, -- вертикальный отступ над монетой по оси Y
+    fieldOfView = 70,
 }
 
 local state = {
@@ -50,6 +62,8 @@ local state = {
     aimMurderer = false,
     autoShoot = false,
     coinFarm = false,
+    crosshair = false,
+    fpsBoost = false,
 }
 
 local conns = {}
@@ -63,12 +77,21 @@ local shuttingDown = false
 local killAllBusy = false
 local farmConnection = nil
 local farmVelocity = nil
-local farmGyro = nil
 local farmCurrentCoin = nil
-local farmPendingCoin = nil
-local farmPendingUntil = 0
 local farmNextScan = 0
 local farmLastTouched = setmetatable({}, {__mode = "k"})
+local farmPendingCoin = nil
+local farmPendingAt = 0
+local farmCoinsCollected = 0
+local fpsOriginal = {}
+local fpsBoostActive = false
+local originalFov = nil
+local crosshairObject = nil
+local voteRunning = false
+local voteCancelled = false
+local votePanel = nil
+local voteMapBox = nil
+local voteStatusLabel = nil
 local farmRestoreNoclip = false
 local originalAvatarDescription = nil
 local avatarBusy = false
@@ -152,18 +175,32 @@ local TEXT = Color3.fromRGB(235, 235, 245)
 local DIM = Color3.fromRGB(150, 150, 170)
 
 local guiParent
-if typeof(gethui) == "function" then
+if EXECUTOR_CAPS.gethui then
     local ok, result = pcall(gethui)
     if ok and result then
         guiParent = result
     end
 end
 if not guiParent then
-    guiParent = lp:WaitForChild("PlayerGui")
+    local ok, result = pcall(function()
+        return lp:FindFirstChildOfClass("PlayerGui") or lp:WaitForChild("PlayerGui", 10)
+    end)
+    if ok then
+        guiParent = result
+    end
+end
+if not guiParent then
+    error("NEXUS MM2 HUB: не найден PlayerGui для создания меню")
+end
+
+-- Prevent duplicate windows when the script is executed again in Solara.
+local previousGui = guiParent:FindFirstChild("NEXUS_MM2_HUB_V3")
+if previousGui then
+    pcall(function() previousGui:Destroy() end)
 end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "MM2HubV2_" .. HttpService:GenerateGUID(false)
+gui.Name = "NEXUS_MM2_HUB_V3"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 999999
@@ -243,7 +280,7 @@ loadingLogo.BackgroundTransparency = 1
 loadingLogo.Font = Enum.Font.GothamBlack
 loadingLogo.TextSize = 28
 loadingLogo.TextColor3 = TEXT
-loadingLogo.Text = "MM2 HUB"
+loadingLogo.Text = "NEXUS MM2 HUB"
 loadingLogo.ZIndex = 102
 loadingLogo.Parent = loadingCard
 
@@ -384,7 +421,7 @@ title.Font = Enum.Font.GothamBold
 title.TextSize = 15
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = TEXT
-title.Text = "MM2 Hub <font color='#7a64ff'>v2</font>"
+title.Text = "NEXUS MM2 <font color='#7a64ff'>v3</font>"
 title.RichText = true
 title.Parent = top
 
@@ -440,8 +477,13 @@ trackExternal(UserInputService.InputEnded:Connect(function(input)
 end))
 
 -- Sidebar
-local side = Instance.new("Frame")
+local side = Instance.new("ScrollingFrame")
 side.Size = UDim2.new(0, 120, 1, -50)
+side.CanvasSize = UDim2.new()
+side.AutomaticCanvasSize = Enum.AutomaticSize.Y
+side.ScrollingDirection = Enum.ScrollingDirection.Y
+side.ScrollBarThickness = 2
+side.ScrollBarImageColor3 = ACCENT
 side.Position = UDim2.fromOffset(8, 44)
 side.BackgroundColor3 = PANEL
 side.BorderSizePixel = 0
@@ -898,10 +940,6 @@ local function stopCoinFarm()
         farmVelocity:Destroy()
         farmVelocity = nil
     end
-    if farmGyro then
-        farmGyro:Destroy()
-        farmGyro = nil
-    end
 
     local root = getHRP()
     if root then
@@ -910,7 +948,6 @@ local function stopCoinFarm()
 
     farmCurrentCoin = nil
     farmPendingCoin = nil
-    farmPendingUntil = 0
     if not farmRestoreNoclip and state.noclip then
         setNoclip(false)
     end
@@ -947,8 +984,6 @@ local function setCoinFarm(enabled)
 
     state.coinFarm = true
     farmCurrentCoin = nil
-    farmPendingCoin = nil
-    farmPendingUntil = 0
     farmNextScan = 0
 
     farmConnection = RunService.Heartbeat:Connect(function()
@@ -965,47 +1000,28 @@ local function setCoinFarm(enabled)
             if farmVelocity then
                 farmVelocity:Destroy()
             end
-            if farmGyro then
-                farmGyro:Destroy()
-            end
-
             farmVelocity = Instance.new("BodyVelocity")
             farmVelocity.Name = "MM2CoinFarmVelocity"
             farmVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
             farmVelocity.P = 12000
             farmVelocity.Velocity = Vector3.zero
             farmVelocity.Parent = characterRoot
-
-            -- Keep the avatar turned 90 degrees clockwise relative to its flight direction.
-            farmGyro = Instance.new("BodyGyro")
-            farmGyro.Name = "MM2CoinFarmGyro"
-            farmGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-            farmGyro.P = 10000
-            farmGyro.D = 700
-            farmGyro.CFrame = characterRoot.CFrame * CFrame.Angles(0, math.rad(90), 0)
-            farmGyro.Parent = characterRoot
         end
 
         local now = os.clock()
 
-        -- Give the server a moment to remove the coin after touch. Only call it
-        -- collected when it actually disappears; otherwise retry after a cooldown.
+        -- Count a coin only after the server removes it from the replicated world.
         if farmPendingCoin then
-            farmVelocity.Velocity = Vector3.zero
             if not farmPendingCoin.Parent then
+                farmCoinsCollected += 1
                 farmPendingCoin = nil
-                farmPendingUntil = 0
-                farmCurrentCoin = nil
-                farmNextScan = 0
-                setStatus("Монета собрана · ищу следующую", Color3.fromRGB(74, 200, 140))
-            elseif now >= farmPendingUntil then
+                setStatus("Монета подтверждена · всего " .. tostring(farmCoinsCollected), Color3.fromRGB(74, 200, 140))
+            elseif now - farmPendingAt > 1.25 then
                 farmLastTouched[farmPendingCoin] = now
                 farmPendingCoin = nil
-                farmPendingUntil = 0
-                farmCurrentCoin = nil
-                farmNextScan = now + 0.15
-                setStatus("Монета ещё на карте · пробую следующую", Color3.fromRGB(232, 176, 78))
+                setStatus("Касание отправлено · ожидаю следующую монету", Color3.fromRGB(232, 176, 78))
             else
+                farmVelocity.Velocity = Vector3.zero
                 return
             end
         end
@@ -1017,7 +1033,6 @@ local function setCoinFarm(enabled)
 
         if not farmCurrentCoin then
             farmVelocity.Velocity = Vector3.zero
-            farmGyro.CFrame = CFrame.new(characterRoot.Position) * CFrame.Angles(0, math.rad(90), 0)
             setStatus("Ищу Coin_Server...", Color3.fromRGB(232, 176, 78))
             return
         end
@@ -1028,37 +1043,21 @@ local function setCoinFarm(enabled)
         local delta = targetPosition - characterRoot.Position
         local distance = delta.Magnitude
 
-        -- Face the target, then apply the requested 90-degree yaw offset.
-        local facing = delta.Magnitude > 0.05 and delta.Unit or characterRoot.CFrame.LookVector
-        farmGyro.CFrame = CFrame.lookAt(
-            characterRoot.Position,
-            characterRoot.Position + facing
-        ) * CFrame.Angles(0, math.rad(90), 0)
-
         local touchDistance = touchAvailable and 2.2 or 0.9
         if distance <= touchDistance then
             farmVelocity.Velocity = Vector3.zero
+            local touchedCoin = farmCurrentCoin
             if touchAvailable then
-                local touchedCoin = farmCurrentCoin
-                local touchOK = pcall(function()
+                pcall(function()
                     firetouchinterest(characterRoot, touchedCoin, 0)
                     firetouchinterest(characterRoot, touchedCoin, 1)
                 end)
-                if touchOK then
-                    farmPendingCoin = touchedCoin
-                    farmPendingUntil = now + 0.45
-                else
-                    farmLastTouched[touchedCoin] = now
-                    farmCurrentCoin = nil
-                    farmNextScan = now + 0.5
-                end
-            else
-                -- Without the executor touch API, don't report a collection.
-                farmLastTouched[farmCurrentCoin] = now
-                farmCurrentCoin = nil
-                farmNextScan = now + 0.8
-                setStatus("Рядом с монетой · нужен firetouchinterest", Color3.fromRGB(232, 176, 78))
             end
+            farmPendingCoin = touchedCoin
+            farmPendingAt = now
+            farmCurrentCoin = nil
+            farmNextScan = now + 0.2
+            setStatus("Касание отправлено · проверяю сбор", Color3.fromRGB(232, 176, 78))
         else
             farmVelocity.Velocity = delta.Unit * cfg.coinFarmSpeed
             setStatus("Лечу к Coin_Server · " .. tostring(math.floor(distance)) .. " studs")
@@ -1632,6 +1631,379 @@ local pFling = createTab("Fling", "🌀")
 local pMisc = createTab("Misc", "⚙")
 local pFarm = createTab("Farm", "🪙")
 local pSkins = createTab("Skins", "🎭")
+local pStats = createTab("Stats", "📊")
+
+-- ══════════════════════════════════════════════
+-- STATS / CLIENT TOOLS / MAP VOTE ASSISTANT
+-- Public MM2 client scripts cannot grant server-side invisibility or teleport
+-- a player into restricted rooms. Vote helper only activates a visible,
+-- official map-vote GUI button when the game itself presents it.
+-- ══════════════════════════════════════════════
+local function setFOV(value)
+    cfg.fieldOfView = math.clamp(math.floor(value + 0.5), 60, 120)
+    local camera = workspace.CurrentCamera
+    if camera then
+        if originalFov == nil then
+            originalFov = camera.FieldOfView
+        end
+        camera.FieldOfView = cfg.fieldOfView
+    end
+end
+
+local function setCrosshair(enabled)
+    state.crosshair = enabled == true
+    if crosshairObject then
+        crosshairObject:Destroy()
+        crosshairObject = nil
+    end
+    if not state.crosshair then
+        return
+    end
+
+    local holder = Instance.new("Frame")
+    holder.Name = "NexusCrosshair"
+    holder.Size = UDim2.fromOffset(24, 24)
+    holder.AnchorPoint = Vector2.new(0.5, 0.5)
+    holder.Position = UDim2.fromScale(0.5, 0.5)
+    holder.BackgroundTransparency = 1
+    holder.ZIndex = 90
+    holder.Parent = gui
+
+    local function line(size, position)
+        local frame = Instance.new("Frame")
+        frame.Size = size
+        frame.Position = position
+        frame.BackgroundColor3 = Color3.fromRGB(245, 245, 255)
+        frame.BorderSizePixel = 0
+        frame.ZIndex = 91
+        frame.Parent = holder
+        stroke(frame, Color3.fromRGB(15, 15, 20), 1)
+    end
+
+    line(UDim2.fromOffset(2, 8), UDim2.new(0.5, -1, 0, 0))
+    line(UDim2.fromOffset(2, 8), UDim2.new(0.5, -1, 1, -8))
+    line(UDim2.fromOffset(8, 2), UDim2.new(0, 0, 0.5, -1))
+    line(UDim2.fromOffset(8, 2), UDim2.new(1, -8, 0.5, -1))
+    crosshairObject = holder
+end
+
+local function setFPSBoost(enabled)
+    enabled = enabled == true
+    if enabled == fpsBoostActive then
+        return
+    end
+    fpsBoostActive = enabled
+    state.fpsBoost = enabled
+
+    if enabled then
+        fpsOriginal = {}
+        local function disableProperty(object, property)
+            local ok, current = pcall(function() return object[property] end)
+            if ok and current == true then
+                fpsOriginal[#fpsOriginal + 1] = {object = object, property = property, value = current}
+                pcall(function() object[property] = false end)
+            end
+        end
+
+        pcall(function()
+            if Lighting.GlobalShadows then
+                fpsOriginal[#fpsOriginal + 1] = {object = Lighting, property = "GlobalShadows", value = Lighting.GlobalShadows}
+                Lighting.GlobalShadows = false
+            end
+        end)
+
+        for _, object in ipairs(Lighting:GetDescendants()) do
+            if object:IsA("PostEffect") then
+                disableProperty(object, "Enabled")
+            end
+        end
+        for _, object in ipairs(workspace:GetDescendants()) do
+            if object:IsA("ParticleEmitter") or object:IsA("Trail")
+                or object:IsA("Beam") or object:IsA("Smoke")
+                or object:IsA("Fire") or object:IsA("Sparkles") then
+                disableProperty(object, "Enabled")
+            end
+        end
+        setStatus("FPS Boost включён · локальные эффекты отключены", Color3.fromRGB(74, 200, 140))
+    else
+        for _, entry in ipairs(fpsOriginal) do
+            if entry.object and entry.object.Parent then
+                pcall(function() entry.object[entry.property] = entry.value end)
+            elseif entry.object == Lighting then
+                pcall(function() Lighting[entry.property] = entry.value end)
+            end
+        end
+        fpsOriginal = {}
+        setStatus("Исходные графические эффекты восстановлены", Color3.fromRGB(74, 200, 140))
+    end
+end
+
+local function normalizeMapText(value)
+    return string.lower(tostring(value or "")):gsub("[^%w]", "")
+end
+
+local function isGuiVisible(object)
+    local current = object
+    while current do
+        if current:IsA("GuiObject") and not current.Visible then
+            return false
+        end
+        if current:IsA("ScreenGui") and not current.Enabled then
+            return false
+        end
+        current = current.Parent
+    end
+    return true
+end
+
+local function findOfficialMapVoteButton(mapName)
+    local playerGui = lp:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then
+        return nil
+    end
+
+    local wanted = normalizeMapText(mapName)
+    if wanted == "" then
+        return nil
+    end
+
+    for _, object in ipairs(playerGui:GetDescendants()) do
+        if object:IsA("GuiButton") and isGuiVisible(object) then
+            local ancestry = string.lower(object:GetFullName())
+            local inVoteUi = ancestry:find("vote", 1, true) or ancestry:find("map", 1, true)
+            if inVoteUi then
+                local textParts = {object.Name}
+                if object:IsA("TextButton") then
+                    table.insert(textParts, object.Text)
+                end
+                for _, child in ipairs(object:GetDescendants()) do
+                    if child:IsA("TextLabel") or child:IsA("TextButton") then
+                        table.insert(textParts, child.Text)
+                    end
+                end
+                local combined = normalizeMapText(table.concat(textParts, " "))
+                if combined:find(wanted, 1, true) then
+                    return object
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function updateVoteStatus(message, color)
+    if voteStatusLabel and voteStatusLabel.Parent then
+        voteStatusLabel.Text = tostring(message)
+        voteStatusLabel.TextColor3 = color or DIM
+    end
+end
+
+local function startVoteAssistant()
+    if voteRunning then
+        updateVoteStatus("Голосование уже ожидается", Color3.fromRGB(232, 176, 78))
+        return
+    end
+    local mapName = voteMapBox and voteMapBox.Text or ""
+    mapName = tostring(mapName):match("^%s*(.-)%s*$")
+    if mapName == "" then
+        updateVoteStatus("Введи точное название карты", Color3.fromRGB(228, 96, 106))
+        return
+    end
+
+    voteRunning = true
+    voteCancelled = false
+    updateVoteStatus("Жду официальное меню голосования…", Color3.fromRGB(232, 176, 78))
+    task.spawn(function()
+        local deadline = os.clock() + 120
+        while voteRunning and not voteCancelled and os.clock() < deadline and not shuttingDown do
+            local button = findOfficialMapVoteButton(mapName)
+            if button then
+                local ok = pcall(function()
+                    button:Activate()
+                end)
+                if ok then
+                    updateVoteStatus("Нажата кнопка карты: " .. mapName .. ". Проверь подтверждение в игре.", Color3.fromRGB(74, 200, 140))
+                else
+                    updateVoteStatus("Не удалось нажать кнопку игры", Color3.fromRGB(228, 96, 106))
+                end
+                voteRunning = false
+                return
+            end
+            task.wait(0.25)
+        end
+
+        voteRunning = false
+        if voteCancelled then
+            updateVoteStatus("Ожидание отменено", DIM)
+        elseif not shuttingDown then
+            updateVoteStatus("Официальная кнопка не найдена. Открой голосование в игре.", Color3.fromRGB(228, 96, 106))
+        end
+    end)
+end
+
+local function cancelVoteAssistant()
+    voteCancelled = true
+    voteRunning = false
+    updateVoteStatus("Ожидание отменено", DIM)
+end
+
+-- Separate compact map-vote window. It does not teleport, kill the player,
+-- or invoke hidden remotes; it only activates the visible official map button.
+votePanel = Instance.new("Frame")
+votePanel.Name = "MapVoteAssistant"
+votePanel.Size = UDim2.fromOffset(278, 184)
+votePanel.Position = UDim2.new(1, -296, 1, -204)
+votePanel.BackgroundColor3 = PANEL
+votePanel.BorderSizePixel = 0
+votePanel.Visible = false
+votePanel.ZIndex = 70
+votePanel.Parent = gui
+corner(votePanel, 12)
+stroke(votePanel, ACCENT, 1)
+
+local voteTitle = Instance.new("TextLabel")
+voteTitle.Size = UDim2.new(1, -42, 0, 34)
+voteTitle.Position = UDim2.fromOffset(12, 2)
+voteTitle.BackgroundTransparency = 1
+voteTitle.Font = Enum.Font.GothamBold
+voteTitle.TextSize = 13
+voteTitle.TextXAlignment = Enum.TextXAlignment.Left
+voteTitle.TextColor3 = TEXT
+voteTitle.Text = "🗳 MAP VOTE ASSISTANT"
+voteTitle.ZIndex = 71
+voteTitle.Parent = votePanel
+
+local voteClose = Instance.new("TextButton")
+voteClose.Size = UDim2.fromOffset(24, 24)
+voteClose.Position = UDim2.new(1, -30, 0, 6)
+voteClose.BackgroundColor3 = Color3.fromRGB(150, 60, 70)
+voteClose.Text = "×"
+voteClose.TextColor3 = TEXT
+voteClose.Font = Enum.Font.GothamBold
+voteClose.TextSize = 16
+voteClose.ZIndex = 72
+voteClose.Parent = votePanel
+corner(voteClose, 7)
+voteClose.MouseButton1Click:Connect(function() votePanel.Visible = false end)
+
+local voteHint = Instance.new("TextLabel")
+voteHint.Size = UDim2.new(1, -24, 0, 28)
+voteHint.Position = UDim2.fromOffset(12, 36)
+voteHint.BackgroundTransparency = 1
+voteHint.Font = Enum.Font.Gotham
+voteHint.TextSize = 10
+voteHint.TextWrapped = true
+voteHint.TextXAlignment = Enum.TextXAlignment.Left
+voteHint.TextColor3 = DIM
+voteHint.Text = "Введи название карты. Панель нажмёт её кнопку, когда появится официальное голосование."
+voteHint.ZIndex = 71
+voteHint.Parent = votePanel
+
+voteMapBox = Instance.new("TextBox")
+voteMapBox.Size = UDim2.new(1, -24, 0, 30)
+voteMapBox.Position = UDim2.fromOffset(12, 70)
+voteMapBox.BackgroundColor3 = ITEM
+voteMapBox.BorderSizePixel = 0
+voteMapBox.Font = Enum.Font.Gotham
+voteMapBox.TextSize = 12
+voteMapBox.TextColor3 = TEXT
+voteMapBox.PlaceholderColor3 = DIM
+voteMapBox.PlaceholderText = "Например: Mansion2"
+voteMapBox.Text = ""
+voteMapBox.ClearTextOnFocus = false
+voteMapBox.ZIndex = 71
+voteMapBox.Parent = votePanel
+corner(voteMapBox, 7)
+
+local voteStart = Instance.new("TextButton")
+voteStart.Size = UDim2.new(0.5, -16, 0, 30)
+voteStart.Position = UDim2.fromOffset(12, 108)
+voteStart.BackgroundColor3 = ACCENT
+voteStart.Text = "▶  Начать"
+voteStart.TextColor3 = TEXT
+voteStart.Font = Enum.Font.GothamBold
+voteStart.TextSize = 12
+voteStart.ZIndex = 71
+voteStart.Parent = votePanel
+corner(voteStart, 7)
+voteStart.MouseButton1Click:Connect(startVoteAssistant)
+
+local voteStop = Instance.new("TextButton")
+voteStop.Size = UDim2.new(0.5, -16, 0, 30)
+voteStop.Position = UDim2.new(0.5, 4, 0, 108)
+voteStop.BackgroundColor3 = ITEM
+voteStop.Text = "■  Стоп"
+voteStop.TextColor3 = TEXT
+voteStop.Font = Enum.Font.GothamBold
+voteStop.TextSize = 12
+voteStop.ZIndex = 71
+voteStop.Parent = votePanel
+corner(voteStop, 7)
+voteStop.MouseButton1Click:Connect(cancelVoteAssistant)
+
+voteStatusLabel = Instance.new("TextLabel")
+voteStatusLabel.Size = UDim2.new(1, -24, 0, 34)
+voteStatusLabel.Position = UDim2.fromOffset(12, 145)
+voteStatusLabel.BackgroundTransparency = 1
+voteStatusLabel.Font = Enum.Font.Gotham
+voteStatusLabel.TextSize = 10
+voteStatusLabel.TextWrapped = true
+voteStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+voteStatusLabel.TextYAlignment = Enum.TextYAlignment.Top
+voteStatusLabel.TextColor3 = DIM
+voteStatusLabel.Text = "Ожидание выключено"
+voteStatusLabel.ZIndex = 71
+voteStatusLabel.Parent = votePanel
+
+local function getDisplayedCoinCount()
+    local leaderstats = lp:FindFirstChild("leaderstats")
+    if not leaderstats then
+        return nil
+    end
+    local accepted = {coins = true, coin = true, coinscollected = true, collectedcoins = true}
+    for _, valueObject in ipairs(leaderstats:GetChildren()) do
+        local key = string.lower(valueObject.Name):gsub("[^%w]", "")
+        if accepted[key] and (valueObject:IsA("IntValue") or valueObject:IsA("NumberValue")) then
+            return valueObject.Value
+        end
+    end
+    return nil
+end
+
+local function readRoundPhase()
+    local playerGui = lp:FindFirstChildOfClass("PlayerGui")
+    if playerGui then
+        for _, object in ipairs(playerGui:GetDescendants()) do
+            if object:IsA("TextLabel") and object.Visible then
+                local textValue = tostring(object.Text or "")
+                local lower = string.lower(textValue)
+                if lower:find("intermission", 1, true)
+                    or lower:find("waiting", 1, true)
+                    or lower:find("victory", 1, true)
+                    or lower:find("survive", 1, true)
+                    or lower:find("round", 1, true)
+                    or lower:find("loading", 1, true) then
+                    return textValue
+                end
+            end
+        end
+    end
+    local humanoid = getHum()
+    if not humanoid or humanoid.Health <= 0 then
+        return "Персонаж погиб / наблюдение"
+    end
+    return "Фаза не распознана"
+end
+
+local statsCoinLabel
+local statsRoundLabel
+local statsPerfLabel
+local statsRoleLabel
+local roundStarts = 0
+local lastPhase = nil
+local statsAccumulator = 0
+local fpsFrames = 0
+local currentFPS = 0
 
 -- Combat
 addSection(pCombat, "Убийца")
@@ -1676,7 +2048,7 @@ farmInfo.TextWrapped = true
 farmInfo.TextYAlignment = Enum.TextYAlignment.Top
 farmInfo.TextXAlignment = Enum.TextXAlignment.Left
 farmInfo.TextColor3 = DIM
-farmInfo.Text = "Ищет ближайший Coin_Server, летит к нему и поворачивает персонажа на 90° относительно направления полёта. Высота настраивается ниже. Сбор зависит от firetouchinterest и сервера MM2."
+farmInfo.Text = "Ищет Coin_Server и летит к ближайшей монете. firetouchinterest используется только если API доступен; иначе проверяется обычное касание."
 farmInfo.Parent = pFarm
 addToggle(pFarm, "Coin Farm (Coin_Server)", false, setCoinFarm)
 addSlider(pFarm, "Скорость полёта", 20, 180, cfg.coinFarmSpeed, function(value)
@@ -1737,6 +2109,76 @@ skinStatus.TextYAlignment = Enum.TextYAlignment.Top
 skinStatus.TextColor3 = DIM
 skinStatus.Text = "Это меняет только внешний вид персонажа на твоём клиенте. Ножи и пистолеты MM2 не разблокируются."
 skinStatus.Parent = pSkins
+
+-- Stats / helper tools (ten client-side utilities and readouts)
+addSection(pStats, "Монеты и раунды")
+statsCoinLabel = Instance.new("TextLabel")
+statsCoinLabel.Size = UDim2.new(1, 0, 0, 30)
+statsCoinLabel.BackgroundColor3 = ITEM
+statsCoinLabel.Font = Enum.Font.GothamSemibold
+statsCoinLabel.TextSize = 12
+statsCoinLabel.TextColor3 = TEXT
+statsCoinLabel.TextXAlignment = Enum.TextXAlignment.Left
+statsCoinLabel.Text = "Монеты: счётчик недоступен · фарм: 0"
+statsCoinLabel.Parent = pStats
+corner(statsCoinLabel, 8)
+
+statsRoundLabel = Instance.new("TextLabel")
+statsRoundLabel.Size = UDim2.new(1, 0, 0, 42)
+statsRoundLabel.BackgroundColor3 = ITEM
+statsRoundLabel.Font = Enum.Font.Gotham
+statsRoundLabel.TextSize = 11
+statsRoundLabel.TextWrapped = true
+statsRoundLabel.TextColor3 = TEXT
+statsRoundLabel.TextXAlignment = Enum.TextXAlignment.Left
+statsRoundLabel.Text = "Раунд: определение…"
+statsRoundLabel.Parent = pStats
+corner(statsRoundLabel, 8)
+
+statsRoleLabel = Instance.new("TextLabel")
+statsRoleLabel.Size = UDim2.new(1, 0, 0, 28)
+statsRoleLabel.BackgroundColor3 = ITEM
+statsRoleLabel.Font = Enum.Font.GothamSemibold
+statsRoleLabel.TextSize = 12
+statsRoleLabel.TextColor3 = TEXT
+statsRoleLabel.TextXAlignment = Enum.TextXAlignment.Left
+statsRoleLabel.Text = "Роль: определение…"
+statsRoleLabel.Parent = pStats
+corner(statsRoleLabel, 8)
+
+statsPerfLabel = Instance.new("TextLabel")
+statsPerfLabel.Size = UDim2.new(1, 0, 0, 34)
+statsPerfLabel.BackgroundColor3 = ITEM
+statsPerfLabel.Font = Enum.Font.GothamSemibold
+statsPerfLabel.TextSize = 12
+statsPerfLabel.TextColor3 = TEXT
+statsPerfLabel.TextWrapped = true
+statsPerfLabel.TextXAlignment = Enum.TextXAlignment.Left
+statsPerfLabel.Text = "FPS: — · Ping: —"
+statsPerfLabel.Parent = pStats
+corner(statsPerfLabel, 8)
+
+addSection(pStats, "Настройки клиента")
+addToggle(pStats, "Crosshair — прицел по центру", false, setCrosshair)
+addSlider(pStats, "FOV камеры", 60, 120, cfg.fieldOfView, setFOV)
+addToggle(pStats, "FPS Boost — убрать эффекты", false, setFPSBoost)
+
+addSection(pStats, "Ещё инструменты")
+local utilityInfo = Instance.new("TextLabel")
+utilityInfo.Size = UDim2.new(1, 0, 0, 82)
+utilityInfo.BackgroundTransparency = 1
+utilityInfo.Font = Enum.Font.Gotham
+utilityInfo.TextSize = 10
+utilityInfo.TextWrapped = true
+utilityInfo.TextYAlignment = Enum.TextYAlignment.Top
+utilityInfo.TextXAlignment = Enum.TextXAlignment.Left
+utilityInfo.TextColor3 = DIM
+utilityInfo.Text = "Включены: Coin Tracker, Farm Session Counter, Round Tracker, Role Detector, HP Monitor, FPS Counter, Ping Monitor, Crosshair, FOV Changer и FPS Boost. Серверная невидимость в публичной MM2 недоступна для LocalScript: локальное скрытие не скроет персонажа от других игроков."
+utilityInfo.Parent = pStats
+
+addButton(pStats, "🗳  Открыть маленькое меню голосования", function()
+    votePanel.Visible = not votePanel.Visible
+end, ACCENT)
 
 -- Visuals
 addSection(pVisual, "ESP игроков")
@@ -1902,6 +2344,11 @@ end))
 refreshPlayers()
 
 -- Misc / optional remote loader
+addSection(pMisc, "Голосование")
+addButton(pMisc, "🗳  Открыть меню выбора карты", function()
+    votePanel.Visible = not votePanel.Visible
+end, ACCENT)
+
 local function fetchWithTimeout(url, timeout)
     local done, succeeded, result = false, false, nil
     task.spawn(function()
@@ -1922,6 +2369,15 @@ local function fetchWithTimeout(url, timeout)
     end
     return succeeded, result
 end
+
+addSection(pMisc, "Совместимость с Solara")
+addButton(pMisc, "Проверить доступные API", function()
+    local touchText = EXECUTOR_CAPS.firetouchinterest and "доступен" or "недоступен"
+    local huiText = EXECUTOR_CAPS.gethui and "доступен" or "используется PlayerGui"
+    local loadText = EXECUTOR_CAPS.loadstring and "доступен" or "недоступен"
+    setStatus("Solara/API: touch=" .. touchText .. " · UI=" .. huiText .. " · loadstring=" .. loadText,
+        Color3.fromRGB(232, 176, 78))
+end)
 
 addSection(pMisc, "Внешний лоадер")
 local loaderBusy = false
@@ -1948,7 +2404,7 @@ loaderButton = addButton(pMisc, "▶  Запустить внешний лоад
         end
 
         setStatus("2/3 Компилирую (" .. #body .. " байт)...", Color3.fromRGB(232, 176, 78))
-        if type(loadstring) ~= "function" then
+        if not EXECUTOR_CAPS.loadstring then
             setStatus("✖ loadstring недоступен", Color3.fromRGB(228, 96, 106))
             loaderButton.Text = "▶  Повторить"
             loaderBusy = false
@@ -2009,6 +2465,50 @@ conns.main = RunService.Heartbeat:Connect(function(dt)
         conns.espTimer = 0
         if state.esp or state.espGun then
             updateESP()
+        end
+    end
+
+    statsAccumulator += dt
+    fpsFrames += 1
+    if statsAccumulator >= 0.75 then
+        currentFPS = math.floor(fpsFrames / math.max(statsAccumulator, 0.001) + 0.5)
+        fpsFrames = 0
+        statsAccumulator = 0
+
+        local coinValue = getDisplayedCoinCount()
+        if statsCoinLabel and statsCoinLabel.Parent then
+            local coinText = coinValue ~= nil and tostring(coinValue) or "недоступен"
+            statsCoinLabel.Text = "Монеты: " .. coinText .. "  ·  фарм подтверждён: " .. tostring(farmCoinsCollected)
+        end
+
+        local phaseText = readRoundPhase()
+        if lastPhase ~= phaseText then
+            local low = string.lower(phaseText)
+            if low:find("round", 1, true) or low:find("survive", 1, true) then
+                if not lastPhase or not (string.lower(lastPhase):find("round", 1, true) or string.lower(lastPhase):find("survive", 1, true)) then
+                    roundStarts += 1
+                end
+            end
+            lastPhase = phaseText
+        end
+        if statsRoundLabel and statsRoundLabel.Parent then
+            statsRoundLabel.Text = string.format("Фаза: %s\nРаундов замечено: %d", phaseText, roundStarts)
+        end
+        if statsRoleLabel and statsRoleLabel.Parent then
+            local humanoidNow = getHum()
+            local hp = humanoidNow and math.floor(humanoidNow.Health) or 0
+            statsRoleLabel.Text = "Роль: " .. roleOf(lp) .. "  ·  HP: " .. tostring(hp)
+        end
+
+        local pingText = "—"
+        local pingOK, pingValue = pcall(function()
+            return lp:GetNetworkPing()
+        end)
+        if pingOK and type(pingValue) == "number" then
+            pingText = tostring(math.floor(pingValue * 1000 + 0.5)) .. " ms"
+        end
+        if statsPerfLabel and statsPerfLabel.Parent then
+            statsPerfLabel.Text = "FPS: " .. tostring(currentFPS) .. "  ·  Ping: " .. pingText
         end
     end
 end)
@@ -2105,6 +2605,12 @@ local function shutdown()
     setNoclip(false)
     cleanFly()
     clearAllESP()
+    cancelVoteAssistant()
+    setFPSBoost(false)
+    setCrosshair(false)
+    if originalFov ~= nil and workspace.CurrentCamera then
+        pcall(function() workspace.CurrentCamera.FieldOfView = originalFov end)
+    end
 
     for _, connection in pairs(conns) do
         if typeof(connection) == "RBXScriptConnection" then
@@ -2130,5 +2636,5 @@ if tabs.Combat then
 end
 
 setMenuVisible(true)
-setStatus("MM2 Hub v2 готов · L — меню")
+setStatus("NEXUS MM2 Hub v3 готов · Solara-safe · L — меню")
 playLoadingAnimation()
