@@ -63,7 +63,10 @@ local shuttingDown = false
 local killAllBusy = false
 local farmConnection = nil
 local farmVelocity = nil
+local farmGyro = nil
 local farmCurrentCoin = nil
+local farmPendingCoin = nil
+local farmPendingUntil = 0
 local farmNextScan = 0
 local farmLastTouched = setmetatable({}, {__mode = "k"})
 local farmRestoreNoclip = false
@@ -895,6 +898,10 @@ local function stopCoinFarm()
         farmVelocity:Destroy()
         farmVelocity = nil
     end
+    if farmGyro then
+        farmGyro:Destroy()
+        farmGyro = nil
+    end
 
     local root = getHRP()
     if root then
@@ -902,6 +909,8 @@ local function stopCoinFarm()
     end
 
     farmCurrentCoin = nil
+    farmPendingCoin = nil
+    farmPendingUntil = 0
     if not farmRestoreNoclip and state.noclip then
         setNoclip(false)
     end
@@ -938,6 +947,8 @@ local function setCoinFarm(enabled)
 
     state.coinFarm = true
     farmCurrentCoin = nil
+    farmPendingCoin = nil
+    farmPendingUntil = 0
     farmNextScan = 0
 
     farmConnection = RunService.Heartbeat:Connect(function()
@@ -954,15 +965,51 @@ local function setCoinFarm(enabled)
             if farmVelocity then
                 farmVelocity:Destroy()
             end
+            if farmGyro then
+                farmGyro:Destroy()
+            end
+
             farmVelocity = Instance.new("BodyVelocity")
             farmVelocity.Name = "MM2CoinFarmVelocity"
             farmVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
             farmVelocity.P = 12000
             farmVelocity.Velocity = Vector3.zero
             farmVelocity.Parent = characterRoot
+
+            -- Keep the avatar turned 90 degrees clockwise relative to its flight direction.
+            farmGyro = Instance.new("BodyGyro")
+            farmGyro.Name = "MM2CoinFarmGyro"
+            farmGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+            farmGyro.P = 10000
+            farmGyro.D = 700
+            farmGyro.CFrame = characterRoot.CFrame * CFrame.Angles(0, math.rad(90), 0)
+            farmGyro.Parent = characterRoot
         end
 
         local now = os.clock()
+
+        -- Give the server a moment to remove the coin after touch. Only call it
+        -- collected when it actually disappears; otherwise retry after a cooldown.
+        if farmPendingCoin then
+            farmVelocity.Velocity = Vector3.zero
+            if not farmPendingCoin.Parent then
+                farmPendingCoin = nil
+                farmPendingUntil = 0
+                farmCurrentCoin = nil
+                farmNextScan = 0
+                setStatus("Монета собрана · ищу следующую", Color3.fromRGB(74, 200, 140))
+            elseif now >= farmPendingUntil then
+                farmLastTouched[farmPendingCoin] = now
+                farmPendingCoin = nil
+                farmPendingUntil = 0
+                farmCurrentCoin = nil
+                farmNextScan = now + 0.15
+                setStatus("Монета ещё на карте · пробую следующую", Color3.fromRGB(232, 176, 78))
+            else
+                return
+            end
+        end
+
         if not farmCurrentCoin or not farmCurrentCoin.Parent or now >= farmNextScan then
             farmCurrentCoin = findNearestCoin()
             farmNextScan = now + 0.55
@@ -970,6 +1017,7 @@ local function setCoinFarm(enabled)
 
         if not farmCurrentCoin then
             farmVelocity.Velocity = Vector3.zero
+            farmGyro.CFrame = CFrame.new(characterRoot.Position) * CFrame.Angles(0, math.rad(90), 0)
             setStatus("Ищу Coin_Server...", Color3.fromRGB(232, 176, 78))
             return
         end
@@ -980,19 +1028,37 @@ local function setCoinFarm(enabled)
         local delta = targetPosition - characterRoot.Position
         local distance = delta.Magnitude
 
+        -- Face the target, then apply the requested 90-degree yaw offset.
+        local facing = delta.Magnitude > 0.05 and delta.Unit or characterRoot.CFrame.LookVector
+        farmGyro.CFrame = CFrame.lookAt(
+            characterRoot.Position,
+            characterRoot.Position + facing
+        ) * CFrame.Angles(0, math.rad(90), 0)
+
         local touchDistance = touchAvailable and 2.2 or 0.9
         if distance <= touchDistance then
             farmVelocity.Velocity = Vector3.zero
             if touchAvailable then
-                pcall(function()
-                    firetouchinterest(characterRoot, farmCurrentCoin, 0)
-                    firetouchinterest(characterRoot, farmCurrentCoin, 1)
+                local touchedCoin = farmCurrentCoin
+                local touchOK = pcall(function()
+                    firetouchinterest(characterRoot, touchedCoin, 0)
+                    firetouchinterest(characterRoot, touchedCoin, 1)
                 end)
+                if touchOK then
+                    farmPendingCoin = touchedCoin
+                    farmPendingUntil = now + 0.45
+                else
+                    farmLastTouched[touchedCoin] = now
+                    farmCurrentCoin = nil
+                    farmNextScan = now + 0.5
+                end
+            else
+                -- Without the executor touch API, don't report a collection.
+                farmLastTouched[farmCurrentCoin] = now
+                farmCurrentCoin = nil
+                farmNextScan = now + 0.8
+                setStatus("Рядом с монетой · нужен firetouchinterest", Color3.fromRGB(232, 176, 78))
             end
-            farmLastTouched[farmCurrentCoin] = now
-            farmCurrentCoin = nil
-            farmNextScan = 0
-            setStatus("Монета обработана · ищу следующую", Color3.fromRGB(74, 200, 140))
         else
             farmVelocity.Velocity = delta.Unit * cfg.coinFarmSpeed
             setStatus("Лечу к Coin_Server · " .. tostring(math.floor(distance)) .. " studs")
@@ -1610,7 +1676,7 @@ farmInfo.TextWrapped = true
 farmInfo.TextYAlignment = Enum.TextYAlignment.Top
 farmInfo.TextXAlignment = Enum.TextXAlignment.Left
 farmInfo.TextColor3 = DIM
-farmInfo.Text = "Ищет BasePart с именем Coin_Server и перемещает персонажа к ближайшей монете. Для принудительного touch executor должен поддерживать firetouchinterest."
+farmInfo.Text = "Ищет ближайший Coin_Server, летит к нему и поворачивает персонажа на 90° относительно направления полёта. Высота настраивается ниже. Сбор зависит от firetouchinterest и сервера MM2."
 farmInfo.Parent = pFarm
 addToggle(pFarm, "Coin Farm (Coin_Server)", false, setCoinFarm)
 addSlider(pFarm, "Скорость полёта", 20, 180, cfg.coinFarmSpeed, function(value)
