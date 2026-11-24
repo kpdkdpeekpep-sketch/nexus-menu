@@ -1,6 +1,6 @@
 --[=[
     NEXUS MM2 HUB v3 — ultimate build
-    Tabs: Combat, Visuals, Movement, Fling, Farm, Skins, Stats, Misc
+    Tabs: Combat, Visuals, Movement, Trolling, Fling, Farm, Skins, Stats, Misc
     PC menu key: L
     Touch devices: floating MM2 OPEN button
 
@@ -45,6 +45,8 @@ local cfg = {
     coinFarmSpeed = 95,
     coinHeight = 4, -- вертикальный отступ над монетой по оси Y
     fieldOfView = 70,
+    trollSpeed = 42,
+    trollShakeIntensity = 5,
 }
 
 local state = {
@@ -64,6 +66,9 @@ local state = {
     coinFarm = false,
     crosshair = false,
     fpsBoost = false,
+    trollSpeed = false,
+    trollFakeLag = false,
+    trollShake = false,
 }
 
 local conns = {}
@@ -95,6 +100,9 @@ local voteStatusLabel = nil
 local farmRestoreNoclip = false
 local originalAvatarDescription = nil
 local avatarBusy = false
+local trollLagOverlay = nil
+local trollShakeClock = 0
+local trollShakeBound = false
 local lastAppliedAvatarName = nil
 
 local function trackExternal(connection)
@@ -761,6 +769,144 @@ local function setStatus(message, color)
         statusLbl.Text = tostring(message)
         statusLbl.TextColor3 = color or DIM
     end
+end
+
+-- ══════════════════════════════════════════════
+-- TROLLING EFFECTS (LOCAL COSMETIC / SELF ONLY)
+-- These effects do not alter network traffic or other players' characters.
+-- ══════════════════════════════════════════════
+local function ensureTrollLagOverlay()
+    if trollLagOverlay and trollLagOverlay.Parent then
+        return trollLagOverlay
+    end
+
+    local card = Instance.new("Frame")
+    card.Name = "NexusFakeLagOverlay"
+    card.Size = UDim2.fromOffset(238, 48)
+    card.Position = UDim2.new(0.5, -119, 0, 58)
+    card.BackgroundColor3 = Color3.fromRGB(48, 20, 28)
+    card.BackgroundTransparency = 0.08
+    card.BorderSizePixel = 0
+    card.Visible = false
+    card.ZIndex = 100
+    card.Parent = gui
+    corner(card, 10)
+    stroke(card, Color3.fromRGB(235, 85, 105), 1)
+
+    local label = Instance.new("TextLabel")
+    label.Name = "LagText"
+    label.Size = UDim2.new(1, -16, 1, 0)
+    label.Position = UDim2.fromOffset(8, 0)
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 12
+    label.TextColor3 = Color3.fromRGB(255, 220, 225)
+    label.Text = "⚠  CONNECTION UNSTABLE"
+    label.ZIndex = 101
+    label.Parent = card
+
+    trollLagOverlay = card
+    return card
+end
+
+local function setTrollFakeLag(enabled)
+    state.trollFakeLag = enabled == true
+    if conns.trollLag then
+        conns.trollLag:Disconnect()
+        conns.trollLag = nil
+    end
+
+    if not state.trollFakeLag then
+        if trollLagOverlay then
+            trollLagOverlay.Visible = false
+        end
+        setStatus("Fake Lag выключен · сетевое соединение не изменялось")
+        return
+    end
+
+    local overlay = ensureTrollLagOverlay()
+    local elapsed = 0
+    overlay.Visible = false
+
+    conns.trollLag = RunService.Heartbeat:Connect(function(dt)
+        if shuttingDown or not state.trollFakeLag then
+            return
+        end
+        elapsed += dt
+        local phase = elapsed % 2.1
+        local spike = phase < 0.32
+        overlay.Visible = spike
+        local label = overlay:FindFirstChild("LagText")
+        if label then
+            label.Text = phase < 0.16 and "⚠  LAG SPIKE · 999 MS" or "↻  RECONNECTING..."
+        end
+    end)
+
+    setStatus("Fake Lag: локальная визуальная имитация · ping не меняется", Color3.fromRGB(232, 176, 78))
+end
+
+local function setTrollShake(enabled)
+    state.trollShake = enabled == true
+    if not state.trollShake then
+        if trollShakeBound then
+            pcall(function()
+                RunService:UnbindFromRenderStep("NexusTrollCameraShake")
+            end)
+            trollShakeBound = false
+        end
+        setStatus("Тряска камеры выключена")
+        return
+    end
+
+    if trollShakeBound then
+        pcall(function()
+            RunService:UnbindFromRenderStep("NexusTrollCameraShake")
+        end)
+        trollShakeBound = false
+    end
+
+    trollShakeClock = 0
+    local bindOK, bindError = pcall(function()
+        RunService:BindToRenderStep(
+            "NexusTrollCameraShake",
+            Enum.RenderPriority.Camera.Value + 1,
+            function(dt)
+                if not state.trollShake or shuttingDown then
+                    return
+                end
+                local camera = workspace.CurrentCamera
+                if not camera then
+                    return
+                end
+
+                trollShakeClock += dt
+                local strength = math.clamp(cfg.trollShakeIntensity / 10, 0.05, 1)
+                local x = math.sin(trollShakeClock * 19) * 0.055 * strength
+                local y = math.cos(trollShakeClock * 23) * 0.045 * strength
+                local roll = math.sin(trollShakeClock * 17) * math.rad(1.8) * strength
+                camera.CFrame = camera.CFrame * CFrame.new(x, y, 0) * CFrame.Angles(0, 0, roll)
+            end
+        )
+    end)
+
+    if bindOK then
+        trollShakeBound = true
+        setStatus("Тряска камеры включена · эффект только на твоём экране", Color3.fromRGB(74, 200, 140))
+    else
+        state.trollShake = false
+        setStatus("Не удалось включить тряску: " .. tostring(bindError), Color3.fromRGB(228, 96, 106))
+    end
+end
+
+local function stopTrollingEffects()
+    setTrollFakeLag(false)
+    setTrollShake(false)
+    state.trollSpeed = false
+    local humanoid = getHum()
+    if humanoid then
+        humanoid.WalkSpeed = state.speed and cfg.walkSpeed or 16
+    end
+    setStatus("Эффекты троллинга сброшены")
 end
 
 -- ══════════════════════════════════════════════
@@ -1627,6 +1773,7 @@ end
 local pCombat = createTab("Combat", "⚔")
 local pVisual = createTab("Visuals", "👁")
 local pMove = createTab("Movement", "🏃")
+local pTroll = createTab("Trolling", "😈")
 local pFling = createTab("Fling", "🌀")
 local pMisc = createTab("Misc", "⚙")
 local pFarm = createTab("Farm", "🪙")
@@ -2242,6 +2389,42 @@ addSlider(pMove, "JumpPower", 50, 200, cfg.jumpPower, function(value)
     cfg.jumpPower = value
 end)
 
+-- Trolling: effects are limited to the local player's client.
+addSection(pTroll, "Локальные розыгрыши")
+addToggle(pTroll, "Fake Lag — визуальная имитация", false, setTrollFakeLag)
+addToggle(pTroll, "Тряска камеры", false, setTrollShake)
+addSlider(pTroll, "Сила тряски", 1, 10, cfg.trollShakeIntensity, function(value)
+    cfg.trollShakeIntensity = value
+end)
+
+addSection(pTroll, "Скорость персонажа")
+addToggle(pTroll, "Troll Speed", false, function(value)
+    state.trollSpeed = value
+    if not value then
+        local humanoid = getHum()
+        if humanoid then
+            humanoid.WalkSpeed = state.speed and cfg.walkSpeed or 16
+        end
+    end
+end)
+addSlider(pTroll, "Скорость WalkSpeed", 16, 100, cfg.trollSpeed, function(value)
+    cfg.trollSpeed = value
+end)
+
+addButton(pTroll, "↻  Сбросить эффекты троллинга", stopTrollingEffects, Color3.fromRGB(110, 75, 145))
+
+local trollInfo = Instance.new("TextLabel")
+trollInfo.Size = UDim2.new(1, 0, 0, 54)
+trollInfo.BackgroundTransparency = 1
+trollInfo.Font = Enum.Font.Gotham
+trollInfo.TextSize = 11
+trollInfo.TextWrapped = true
+trollInfo.TextYAlignment = Enum.TextYAlignment.Top
+trollInfo.TextXAlignment = Enum.TextXAlignment.Left
+trollInfo.TextColor3 = DIM
+trollInfo.Text = "Fake Lag и тряска — только визуальные эффекты на твоём экране. Они не создают сетевую задержку и не изменяют других игроков. Скорость меняет локальный WalkSpeed и может быть ограничена сервером."
+trollInfo.Parent = pTroll
+
 -- Fling
 addSection(pFling, "Быстрый флинг")
 local flingInfo = Instance.new("TextLabel")
@@ -2451,7 +2634,9 @@ conns.main = RunService.Heartbeat:Connect(function(dt)
 
     local humanoid = getHum()
     if humanoid then
-        if state.speed then
+        if state.trollSpeed then
+            humanoid.WalkSpeed = cfg.trollSpeed
+        elseif state.speed then
             humanoid.WalkSpeed = cfg.walkSpeed
         end
         if state.jump then
@@ -2608,6 +2793,7 @@ local function shutdown()
     cancelVoteAssistant()
     setFPSBoost(false)
     setCrosshair(false)
+    stopTrollingEffects()
     if originalFov ~= nil and workspace.CurrentCamera then
         pcall(function() workspace.CurrentCamera.FieldOfView = originalFov end)
     end
